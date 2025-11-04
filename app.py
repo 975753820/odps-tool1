@@ -27,15 +27,15 @@ def get_odps_connection(access_id, access_key, project, endpoint):
         st.error(f"ODPS连接失败: {e}")
         return None
 
-def safe_odps_query(table_name, access_id, access_key, project, endpoint, max_rows=100000):
+def safe_odps_query(table_name, access_id, access_key, project, endpoint, max_rows=1000000):
     """安全执行ODPS查询"""
     try:
         o = get_odps_connection(access_id, access_key, project, endpoint)
         if not o:
             return None
             
-        # 安全限制
-        safe_max_rows = min(max_rows, 500000)
+        # 安全限制 - 提高到100万行
+        safe_max_rows = min(max_rows, 1000000)
         sql = f"SELECT * FROM {table_name} LIMIT {safe_max_rows}"
         
         with st.spinner(f"正在查询数据，最多{safe_max_rows}行..."):
@@ -105,9 +105,9 @@ with st.form("export_form"):
     with col2:
         max_rows = st.selectbox(
             "📊 最大行数",
-            [10000, 50000, 100000, 200000, 500000],
+            [100000, 500000, 1000000, 2000000, 5000000],
             index=2,
-            help="为保障系统性能设置的行数限制"
+            help="每80万行数据自动分割到新的Sheet"
         )
     
     submitted = st.form_submit_button(
@@ -129,22 +129,26 @@ if submitted:
             with st.expander("📈 数据预览", expanded=True):
                 st.dataframe(df.head(10), use_container_width=True)
             
-            # 生成Excel文件
+            # 生成Excel文件 - 恢复80万条拆分逻辑
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             status_text.text("正在生成Excel文件...")
             with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                # 分sheet写入
+                # 计算需要的sheet数量（每80万行一个sheet）
                 sheet_num = math.ceil(len(df) / 800000)
+                status_text.text(f"数据将分割到 {sheet_num} 个Sheet中...")
                 
                 with pd.ExcelWriter(tmp_file.name, engine='openpyxl') as writer:
                     for i in range(sheet_num):
                         status_text.text(f"正在写入第 {i+1}/{sheet_num} 个Sheet...")
                         progress_bar.progress((i + 1) / sheet_num)
                         
+                        # 计算当前sheet的数据范围
                         start_idx = i * 800000
                         end_idx = min((i + 1) * 800000, len(df))
+                        
+                        # 写入当前sheet
                         df.iloc[start_idx:end_idx].to_excel(
                             writer, 
                             sheet_name=f'数据_{i+1}', 
@@ -157,8 +161,18 @@ if submitted:
             # 准备下载
             filename = f"{table_name.split('.')[-1]}.xlsx"
             
-            status_text.success("✅ 文件生成完成！")
+            status_text.success(f"✅ 文件生成完成！共 {sheet_num} 个Sheet")
             progress_bar.progress(1.0)
+            
+            # 显示详细导出信息
+            st.info(f"""
+            **导出详情：**
+            - 总行数: {len(df):,} 行
+            - 总列数: {len(df.columns)} 列  
+            - Sheet数量: {sheet_num} 个
+            - 文件大小: {len(excel_data) / 1024 / 1024:.2f} MB
+            - 拆分规则: 每80万行自动分割到新Sheet
+            """)
             
             st.download_button(
                 label="📥 点击下载Excel文件",
@@ -192,15 +206,18 @@ with st.expander("❓ 使用帮助", expanded=True):
     4. **点击导出**：系统自动查询并生成Excel
     5. **下载文件**：点击下载按钮保存
     
+    ### 数据拆分规则：
+    - **每80万行数据自动分割到新的Sheet**
+    - 例如：250万行数据 → 4个Sheet
+    - Sheet1: 1-80万行
+    - Sheet2: 80-160万行  
+    - Sheet3: 160-240万行
+    - Sheet4: 240-250万行
+    
     ### 示例表名：
     - `hsay_etl_dev.order_table`
     - `hsay_etl_dev.user_info` 
     - `hsay_etl_dev.sales_data`
-    
-    ### 安全说明：
-    - ODPS凭据仅在当前浏览器会话有效
-    - 页面刷新后需要重新输入
-    - 凭据不会发送到其他服务器
     """)
 
 # 连接状态显示
@@ -212,4 +229,4 @@ with st.sidebar:
         st.error("❌ 凭据未输入")
 
 st.markdown("---")
-st.caption("ODPS数据导出工具 | 安全的前台凭据输入")
+st.caption("ODPS数据导出工具 | 每80万行自动拆分Sheet")
