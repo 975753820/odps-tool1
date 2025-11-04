@@ -15,27 +15,22 @@ st.set_page_config(
 st.title("📊 ODPS数据导出工具")
 st.markdown("轻松将ODPS数据导出为Excel文件")
 
-def get_odps_connection():
-    """安全获取ODPS连接"""
+def get_odps_connection(access_id, access_key, project, endpoint):
+    """根据用户输入的凭据获取ODPS连接"""
     try:
-        access_id = os.getenv('ODPS_ACCESS_ID')
-        access_key = os.getenv('ODPS_ACCESS_KEY')
-        project = os.getenv('ODPS_PROJECT', 'HSAY_ETL')
-        endpoint = os.getenv('ODPS_ENDPOINT', 'http://service.cn-shanghai.maxcompute.aliyun.com/api')
-        
         if not access_id or not access_key:
-            st.error("系统配置异常，请联系管理员")
+            st.error("请输入完整的ODPS凭据")
             return None
             
         return ODPS(access_id, access_key, project, endpoint)
     except Exception as e:
-        st.error(f"连接失败: {e}")
+        st.error(f"ODPS连接失败: {e}")
         return None
 
-def safe_odps_query(table_name, max_rows=100000):
+def safe_odps_query(table_name, access_id, access_key, project, endpoint, max_rows=100000):
     """安全执行ODPS查询"""
     try:
-        o = get_odps_connection()
+        o = get_odps_connection(access_id, access_key, project, endpoint)
         if not o:
             return None
             
@@ -51,8 +46,51 @@ def safe_odps_query(table_name, max_rows=100000):
         st.error(f"查询失败: {e}")
         return None
 
-# 主界面
+# 侧边栏 - ODPS配置
+with st.sidebar:
+    st.header("🔐 ODPS配置")
+    
+    access_id = st.text_input(
+        "Access ID",
+        placeholder="输入您的Access ID",
+        type="password",
+        help="ODPS访问密钥ID"
+    )
+    
+    access_key = st.text_input(
+        "Access Key", 
+        placeholder="输入您的Access Key",
+        type="password",
+        help="ODPS访问密钥"
+    )
+    
+    project = st.text_input(
+        "Project",
+        value="HSAY_ETL",
+        help="ODPS项目名称"
+    )
+    
+    endpoint = st.text_input(
+        "Endpoint",
+        value="http://service.cn-shanghai.maxcompute.aliyun.com/api",
+        help="ODPS服务端点"
+    )
+    
+    st.markdown("---")
+    st.info("""
+    **配置说明：**
+    - 首次使用需要输入ODPS凭据
+    - 凭据仅在当前会话有效
+    - 不会保存到服务器
+    """)
+
+# 主界面 - 数据导出
 st.subheader("数据导出")
+
+# 检查凭据是否已输入
+if not access_id or not access_key:
+    st.warning("⚠️ 请在左侧输入ODPS凭据以开始使用")
+    st.stop()
 
 with st.form("export_form"):
     col1, col2 = st.columns([2, 1])
@@ -67,7 +105,7 @@ with st.form("export_form"):
     with col2:
         max_rows = st.selectbox(
             "📊 最大行数",
-            [10000, 50000, 100000, 200000],
+            [10000, 50000, 100000, 200000, 500000],
             index=2,
             help="为保障系统性能设置的行数限制"
         )
@@ -82,7 +120,7 @@ if submitted:
     if not table_name:
         st.error("请输入ODPS表名")
     else:
-        df = safe_odps_query(table_name, max_rows)
+        df = safe_odps_query(table_name, access_id, access_key, project, endpoint, max_rows)
         
         if df is not None and not df.empty:
             # 显示数据预览
@@ -136,21 +174,42 @@ if submitted:
                 os.unlink(tmp_file.name)
             except:
                 pass
+        else:
+            st.error("查询失败或返回空数据，请检查：")
+            st.info("""
+            1. 表名是否正确
+            2. ODPS凭据是否有权限
+            3. 网络连接是否正常
+            """)
 
 # 使用说明
 with st.expander("❓ 使用帮助", expanded=True):
     st.markdown("""
     ### 使用方法：
-    1. **输入表名**：格式为 `项目名.表名`
-    2. **选择行数**：设置最大导出行数
-    3. **点击导出**：系统自动查询并生成Excel
-    4. **下载文件**：点击下载按钮保存
+    1. **左侧输入ODPS凭据**（首次使用需要）
+    2. **输入表名**：格式为 `项目名.表名`
+    3. **选择行数**：设置最大导出行数
+    4. **点击导出**：系统自动查询并生成Excel
+    5. **下载文件**：点击下载按钮保存
     
     ### 示例表名：
     - `hsay_etl_dev.order_table`
-    - `hsay_etl_dev.user_info`
+    - `hsay_etl_dev.user_info` 
     - `hsay_etl_dev.sales_data`
+    
+    ### 安全说明：
+    - ODPS凭据仅在当前浏览器会话有效
+    - 页面刷新后需要重新输入
+    - 凭据不会发送到其他服务器
     """)
 
+# 连接状态显示
+with st.sidebar:
+    st.markdown("---")
+    if access_id and access_key:
+        st.success("✅ 凭据已输入")
+    else:
+        st.error("❌ 凭据未输入")
+
 st.markdown("---")
-st.caption("ODPS数据导出工具")
+st.caption("ODPS数据导出工具 | 安全的前台凭据输入")
