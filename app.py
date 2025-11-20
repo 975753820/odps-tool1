@@ -3,6 +3,7 @@ import pandas as pd
 import math
 import tempfile
 import os
+import io
 from odps import ODPS
 
 # 页面配置
@@ -112,8 +113,7 @@ with st.form("export_form"):
     
     submitted = st.form_submit_button(
         "🚀 开始导出", 
-        use_container_width=True,
-        type="primary"
+        use_container_width=True
     )
 
 if submitted:
@@ -127,36 +127,41 @@ if submitted:
             st.success(f"✅ 查询成功！共找到 {len(df):,} 行数据")
             
             with st.expander("📈 数据预览", expanded=True):
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10))
             
-            # 生成Excel文件 - 恢复80万条拆分逻辑
+            # 生成Excel文件 - 使用内存方式，避免临时文件问题
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             status_text.text("正在生成Excel文件...")
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                # 计算需要的sheet数量（每80万行一个sheet）
-                sheet_num = math.ceil(len(df) / 800000)
-                status_text.text(f"数据将分割到 {sheet_num} 个Sheet中...")
-                
-                with pd.ExcelWriter(tmp_file.name, engine='openpyxl') as writer:
-                    for i in range(sheet_num):
-                        status_text.text(f"正在写入第 {i+1}/{sheet_num} 个Sheet...")
-                        progress_bar.progress((i + 1) / sheet_num)
-                        
-                        # 计算当前sheet的数据范围
-                        start_idx = i * 800000
-                        end_idx = min((i + 1) * 800000, len(df))
-                        
-                        # 写入当前sheet
-                        df.iloc[start_idx:end_idx].to_excel(
-                            writer, 
-                            sheet_name=f'数据_{i+1}', 
-                            index=False
-                        )
-                
-                with open(tmp_file.name, 'rb') as f:
-                    excel_data = f.read()
+            
+            # 使用内存缓冲区而不是临时文件
+            excel_buffer = io.BytesIO()
+            
+            # 计算需要的sheet数量（每80万行一个sheet）
+            sheet_num = math.ceil(len(df) / 800000)
+            status_text.text(f"数据将分割到 {sheet_num} 个Sheet中...")
+            
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                for i in range(sheet_num):
+                    status_text.text(f"正在写入第 {i+1}/{sheet_num} 个Sheet...")
+                    progress_bar.progress((i + 1) / sheet_num)
+                    
+                    # 计算当前sheet的数据范围
+                    start_idx = i * 800000
+                    end_idx = min((i + 1) * 800000, len(df))
+                    
+                    # 写入当前sheet
+                    df.iloc[start_idx:end_idx].to_excel(
+                        writer, 
+                        sheet_name=f'数据_{i+1}', 
+                        index=False
+                    )
+            
+            # 获取Excel数据
+            excel_buffer.seek(0)
+            excel_data = excel_buffer.getvalue()
+            excel_buffer.close()
             
             # 准备下载
             filename = f"{table_name.split('.')[-1]}.xlsx"
@@ -179,15 +184,8 @@ if submitted:
                 data=excel_data,
                 file_name=filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                type="primary"
+                use_container_width=True
             )
-            
-            # 清理临时文件
-            try:
-                os.unlink(tmp_file.name)
-            except:
-                pass
         else:
             st.error("查询失败或返回空数据，请检查：")
             st.info("""
